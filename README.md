@@ -19,18 +19,11 @@ Developed and maintained by **p4oT09**.
 
 ### 🐧 Linux
 ```bash
-# Install dependencies
 sudo apt update && sudo apt install -y git curl build-essential pkg-config libssl-dev
-
-# Install Rust (if not installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
-
-# Clone repo
 git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
 cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
 cargo build --release
 ```
 
@@ -43,35 +36,26 @@ Run:
 
 ### 🪟 Windows (PowerShell)
 ```powershell
-# Install Rust
 winget install --id Rustlang.Rustup -e
-
-# Clone repo
 git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
 cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
 cargo build --release
 ```
 
 Run:
 ```powershell
-.	argetelease\webfigchecker.exe --help
+.	arget
+elease\webfigchecker.exe --help
 ```
 
 ---
 
 ### 📱 Android (Termux)
 ```bash
-# Install dependencies
 pkg update && pkg upgrade
 pkg install rust git clang cmake pkg-config openssl
-
-# Clone repo
 git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
 cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
 cargo build --release
 ```
 
