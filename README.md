@@ -1,160 +1,74 @@
-# WebFigChecker 🔍
+# 🚀 WebFigChecker – MikroTik Scanner
 
-**Fast Rust-based scanner to detect MikroTik WebFig services across IPs, CIDRs, Ranges, and ASNs.**  
-Developed and maintained by **p4oT09**.
+**Founder:** Ecbrain  
+**Remodified:** p4oT09  
 
 ---
 
 ## ✨ Features
-- 🚀 Ultra-fast scanning with Rust async runtime
-- 🌐 Supports scanning by **IP, Range, CIDR, ASN**
-- 🔑 Detects MikroTik WebFig instances
-- ⚡ Adjustable concurrency & timeout
-- 📦 Cross-platform support (Linux, Windows, Android/Termux)
-- 🔄 ASN API fallback (bgpview + RIPE Stat)
+- 🎨 Colorful banner with credits
+- Scan **single IPs, Ranges, CIDRs**
+- `--all-ports` to scan all 65535 ports
+- Default ports: 80,443,8080,8291,8443
 
 ---
 
-## 📥 Installation
+## 🖥 Installation
 
-### 🐧 Linux
+### Linux
 ```bash
-# Install dependencies
-sudo apt update && sudo apt install -y git curl build-essential pkg-config libssl-dev
-
-# Install Rust (if not installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sudo apt update && sudo apt install -y git curl build-essential
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source $HOME/.cargo/env
 
-# Clone repo
 git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
 cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
 cargo build --release
 ```
 
-Run:
+### Android (Termux)
 ```bash
-./target/release/webfigchecker --help
+pkg update && pkg upgrade -y
+pkg install rust git clang curl -y
+git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
+cd WebFigChecker---MikroTik-WebFig-Scanner
+cargo build --release
 ```
 
----
-
-### 🪟 Windows (PowerShell)
+### Windows (PowerShell)
 ```powershell
-# Install Rust
-winget install --id Rustlang.Rustup -e
-
-# Clone repo
+irm https://win.rustup.rs -UseBasicParsing | iex
 git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
 cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
 cargo build --release
 ```
 
-Run:
-```powershell
-.	argetelease\webfigchecker.exe --help
-```
-
 ---
 
-### 📱 Android (Termux)
+## 📌 Usage Examples
+
+### Single IP
 ```bash
-# Install dependencies
-pkg update && pkg upgrade
-pkg install rust git clang cmake pkg-config openssl
-
-# Clone repo
-git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
-cd WebFigChecker---MikroTik-WebFig-Scanner
-
-# Build
-cargo build --release
+./target/release/webfigchecker 192.168.1.1 --all-ports
 ```
 
-Run:
+### Range
 ```bash
-./target/release/webfigchecker --help
+./target/release/webfigchecker 192.168.1.10-192.168.1.50 --all-ports
 ```
 
----
-
-## 🚀 Usage Examples
-
-### Scan ASN
+### CIDR
 ```bash
-./target/release/webfigchecker --asn AS13335 --all-ports -c 600 --timeout-ms 1200
-```
-
-### Scan IP range
-```bash
-./target/release/webfigchecker 192.168.1.0/24 --ports 80,8080,8291
-```
-
-### Scan a single IP
-```bash
-./target/release/webfigchecker 1.1.1.1 --all-ports
+./target/release/webfigchecker 192.168.1.0/24 --all-ports
 ```
 
 ---
 
-## 📊 Sample Output
+## 🎨 Banner Demo
 ```
-==============================================
-🔍 WebFigChecker - MikroTik WebFig Scanner
-👤 Author: p4oT09
-==============================================
-
-ASN AS13335 -> 20 prefixes
-Targets: 20 | Ports: 5 | concurrency=400 | timeout=1000ms
-198.51.100.20:80   -> WebFig
-203.0.113.15:8291  -> RouterOS v6.49
+===========================================
+   🚀 WebFigChecker – MikroTik Scanner 🚀
+   Founder: Ecbrain
+   Remodified: p4oT09
+===========================================
 ```
-
----
-
-## 🛠 Troubleshooting
-
-- **ASN shows `0 prefixes`**  
-  ✅ Try numeric format: `--asn 13335` instead of `AS13335`  
-  ✅ Ensure API reachability:  
-  ```bash
-  curl -s 'https://api.bgpview.io/asn/13335/prefixes' | head
-  ```
-
-- **`cargo: command not found`**  
-  → Install Rust:  
-  ```bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- **Build fails in Termux**  
-  → Ensure dependencies:  
-  ```bash
-  pkg install clang cmake pkg-config openssl
-  ```
-
----
-
-## 📂 Project Structure
-```
-├── Cargo.toml
-├── LICENSE
-├── README.md
-└── src/
-    └── main.rs
-```
-
----
-
-## 🧑‍💻 Author
-Developed by **p4oT09**
-
----
-
-## 📜 License
-This project is licensed under the MIT License.  
-© 2025 p4oT09
