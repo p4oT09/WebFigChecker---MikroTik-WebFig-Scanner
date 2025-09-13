@@ -103,6 +103,15 @@ Created by **p4oT09**
 
 ## Installation
 
+### All In One Command
+```bash
+# Install Rust & Cargo if needed:
+# Linux/macOS: https://rustup.rs
+# Termux (Android): pkg update && pkg install rust
+
+# One-line install from this repo (read-only):
+cargo install --git https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git webfigchecker
+
 ### Termux (Android)
 ```bash
 pkg update && pkg upgrade
