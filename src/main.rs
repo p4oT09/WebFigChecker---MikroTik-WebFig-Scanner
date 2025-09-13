@@ -64,14 +64,16 @@ struct Args {
 }
 
 
-fn print_banner() {
-    println!("=======================================");
-    println!("   🚀 Welcome to WebFig Checker Tool   ");
-    println!("   Founder: Ecbrain                    ");
-    println!("   Co-Founder: p4oT09                  ");
-    println!("=======================================\n");
-}
+use colored::*; // ফাইলের উপরে যোগ করুন
 
+fn print_banner() {
+    println!("{}", "=======================================".bright_blue());
+    println!("{}", "   🚀 Welcome to WebFig Checker Tool   ".bright_green().bold());
+    println!("{}", "   Founder: Ecbrain                    ".yellow().bold());
+    println!("{}", "   Co-Founder: p4oT09                  ".magenta().bold());
+    println!("{}", "=======================================".bright_blue());
+    println!();
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     print_banner();
