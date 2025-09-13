@@ -1,6 +1,13 @@
+[package]
+name = "webfigchecker"
+version = "0.2.0"
+edition = "2021"
+authors = ["Ecbrain", "p4oT09"]
+
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["rustls-tls"] }
-ipnet = "2.9"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "gzip"] }
+ipnetwork = "0.20"
+regex = "1"
 futures = "0.3"
