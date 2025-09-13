@@ -48,34 +48,34 @@ webfigchecker [OPTIONS] <IP>
 
 **ASN (default ports 80,443,8080,8291):**
 ```bash
-./target/release/webfigchecker --asn AS15169
+webfigchecker --asn AS15169
 ```
 
 **ASN + all ports (⚠ heavy):**
 ```bash
-./target/release/webfigchecker --asn AS15169 --all-ports -c 600 --timeout-ms 1200
+webfigchecker --asn AS15169 --all-ports -c 600 --timeout-ms 1200
 ```
 
 **ASN + expand all IPs (⚠ very heavy):**
 ```bash
-./target/release/webfigchecker --asn AS15169 --expand-all-ips --ports 80,443,8291
+webfigchecker --asn AS15169 --expand-all-ips --ports 80,443,8291
 ```
 
 **CIDR:**
 ```bash
-./target/release/webfigchecker --cidr 192.168.1.0/24 --ports 80,8291
+webfigchecker --cidr 192.168.1.0/24 --ports 80,8291
 ```
 
 **IPv4 range:**
 ```bash
-./target/release/webfigchecker --ip-range 192.168.1.10-192.168.1.50 --all-ports
+webfigchecker --ip-range 192.168.1.10-192.168.1.50 --all-ports
 # or shorthand within same /24:
-./target/release/webfigchecker --ip-range 192.168.1.10-50 --ports 80,8291
+webfigchecker --ip-range 192.168.1.10-50 --ports 80,8291
 ```
 
 **Single IP:**
 ```bash
-./target/release/webfigchecker 203.0.113.20 --all-ports
+webfigchecker 203.0.113.20 --all-ports
 ```
 
 ### Flags
@@ -143,37 +143,37 @@ cargo build --release
 
 **Single IP:**
 ```bash
-./target/release/webfigchecker 192.168.88.1 --all-ports
+webfigchecker 192.168.88.1 --all-ports
 ```
 
 **ASN all ports (⚠ heavy):**
 ```bash
-./target/release/webfigchecker --asn AS15169 --all-ports -c 600 --timeout-ms 1200
+webfigchecker --asn AS15169 --all-ports -c 600 --timeout-ms 1200
 ```
 
 **CIDR:**
 ```bash
-./target/release/webfigchecker --cidr 192.168.1.0/24 --ports 80,8291
+webfigchecker --cidr 192.168.1.0/24 --ports 80,8291
 ```
 
 **IP Range:**
 ```bash
-./target/release/webfigchecker --ip-range 192.168.1.10-192.168.1.50 --all-ports
+webfigchecker --ip-range 192.168.1.10-192.168.1.50 --all-ports
 ```
 
 **Custom Ports:**
 ```bash
-./target/release/webfigchecker 203.0.113.20 --ports 80,443,8291,8443
+webfigchecker 203.0.113.20 --ports 80,443,8291,8443
 ```
 
 **Per-prefix sampling (ASN):**
 ```bash
-./target/release/webfigchecker --asn AS15169 --ports 80,8291 --per-prefix 2
+webfigchecker --asn AS15169 --ports 80,8291 --per-prefix 2
 ```
 
 **Expand all IPs in ASN (⚠ very heavy):**
 ```bash
-./target/release/webfigchecker --asn AS15169 --expand-all-ips --ports 80,443,8291
+webfigchecker --asn AS15169 --expand-all-ips --ports 80,443,8291
 ```
 
 ## Sample Output
@@ -181,7 +181,7 @@ cargo build --release
 Example ASN scan result:
 
 ```
-$ ./target/release/webfigchecker --asn AS15169 --ports 80,8291 --per-prefix 1
+$ webfigchecker --asn AS15169 --ports 80,8291 --per-prefix 1
 
 ASN AS15169 -> 25 prefixes
 Targets: 25 | Ports: 2 | concurrency=400 | timeout=800ms
