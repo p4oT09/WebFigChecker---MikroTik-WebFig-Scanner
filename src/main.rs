@@ -1,191 +1,203 @@
-use clap::Parser;
+
+use clap::{ArgAction, Parser};
 use futures::stream::{FuturesUnordered, StreamExt};
-use ipnet::Ipv4Net;
-use reqwest::Client;
-use std::net::{IpAddr, Ipv4Addr};
+use ipnetwork::Ipv4Network;
+use regex::Regex;
+use std::collections::HashSet;
+use std::fs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::sync::Semaphore;
 
-#[derive(Parser, Debug, Clone)]
-#[command(
-    name = "WebFigChecker — MikroTik WebFig Scanner",
-    version,
-    about = "Fast Rust scanner to detect MikroTik WebFig across IPs / CIDRs / Ranges",
-)]
-struct Args {
-    /// Single IP, CIDR, or Range (examples: 1.2.3.4 | 1.2.3.0/24 | 1.2.3.4-1.2.3.254)
-    ip: String,
+/// 🚀 WebFigChecker — MikroTik Scanner
+/// Founder: Ecbrain
+/// Co‑Founder: p4oT09
+#[derive(Parser, Debug)]
+#[command(name = "webfigchecker",
+    about = "Scan IP/CIDR/RANGE/ASN for MikroTik WebFig over HTTP/HTTPS",
+    version)]
+struct Cli {
+    /// Target: IPv4/CIDR (e.g., 144.48.115.0/24), single IP, or IP-IP range (start-end)
+    target: Option<String>,
 
-    /// Comma separated ports (default: 80,443,8080,8291,8443)
-    #[arg(long, value_parser = parse_ports)]
-    ports: Option<Vec<u16>>,
+    /// Ports list: "80,443,8080-8090"
+    #[arg(long, value_name = "LIST")]
+    ports: Option<String>,
 
-    /// Scan all 1..=65535 ports
-    #[arg(long = "all-ports", default_value_t = false)]
+    /// Scan all ports 1..=65535
+    #[arg(long, action=ArgAction::SetTrue)]
     all_ports: bool,
 
-    /// Concurrency (parallel workers)
-    #[arg(short = 'c', long, default_value_t = 400)]
+    /// Concurrency
+    #[arg(short='c', long, default_value_t = 400)]
     concurrency: usize,
 
-    /// Request timeout in milliseconds
-    #[arg(long = "timeout-ms", default_value_t = 800)]
+    /// Timeout per request in milliseconds
+    #[arg(long="timeout-ms", default_value_t = 800)]
     timeout_ms: u64,
-}
 
-fn parse_ports(s: &str) -> Result<Vec<u16>, String> {
-    s.split(',')
-        .map(|p| {
-            p.trim()
-                .parse::<u16>()
-                .map_err(|_| format!("Invalid port: {}", p))
-        })
-        .collect()
+    /// ASN input file that contains IPv4 prefixes (one per line)
+    #[arg(long = "asn-file")]
+    asn_file: Option<String>,
 }
 
 fn banner() {
-    println!(
-        r#"
-====================================================
-🚀  WebFigChecker – MikroTik Scanner 🚀
-Founder: Ecbrain
-Co-Founder: p4oT09
-====================================================
-"#);
-}
-
-fn expand_ips(input: &str) -> Result<Vec<IpAddr>, String> {
-    // CIDR: 1.2.3.0/24
-    if input.contains('/') {
-        let net = Ipv4Net::from_str(input).map_err(|_| "Invalid CIDR".to_string())?;
-        let mut ips = Vec::new();
-        for ip in net.hosts() {
-            ips.push(IpAddr::V4(ip));
-        }
-        return Ok(ips);
-    }
-
-    // Range: 1.2.3.4-1.2.3.254
-    if input.contains('-') {
-        let mut parts = input.split('-');
-        let a = parts
-            .next()
-            .ok_or("Invalid range")?
-            .trim()
-            .parse::<Ipv4Addr>()
-            .map_err(|_| "Invalid range start".to_string())?;
-        let b = parts
-            .next()
-            .ok_or("Invalid range")?
-            .trim()
-            .parse::<Ipv4Addr>()
-            .map_err(|_| "Invalid range end".to_string())?;
-
-        let (start, end) = (u32::from(a), u32::from(b));
-        if start > end {
-            return Err("Range start > end".into());
-        }
-        let mut ips = Vec::with_capacity((end - start + 1) as usize);
-        for v in start..=end {
-            ips.push(IpAddr::V4(Ipv4Addr::from(v)));
-        }
-        return Ok(ips);
-    }
-
-    // Single IP
-    let ip = IpAddr::from_str(input).map_err(|_| "Invalid IP address syntax".to_string())?;
-    Ok(vec![ip])
-}
-
-fn default_webfig_ports() -> Vec<u16> {
-    vec![80, 443, 8080, 8291, 8443]
-}
-
-fn is_https_port(p: u16) -> bool {
-    matches!(p, 443 | 8443)
-}
-
-async fn check_one(client: &Client, ip: &IpAddr, port: u16, timeout: Duration) -> Option<String> {
-    let scheme = if is_https_port(port) { "https" } else { "http" };
-    let url = format!("{scheme}://{ip}:{port}/");
-
-    let resp = client.get(&url).timeout(timeout).send().await.ok()?;
-    let status = resp.status();
-    let headers = resp.headers().clone();
-    let body = resp.text().await.unwrap_or_default();
-
-    // Simple WebFig heuristics
-    let looks_like_webfig = body.contains("WebFig")
-        || body.contains("MikroTik")
-        || headers
-            .get("Server")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.contains("MikroTik"))
-            .unwrap_or(false)
-        || status.is_success() && body.to_lowercase().contains("routeros");
-
-    if looks_like_webfig {
-        Some(format!("{ip}:{port} -> webfig"))
-    } else {
-        None
-    }
+    println!(r#"
+============================================================
+   🚀  WebFigChecker — MikroTik Scanner
+       Founder: Ecbrain
+       Co‑Founder: p4oT09
+============================================================"#);
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
+    let cli = Cli::parse();
     banner();
 
-    let args = Args::parse();
+    let timeout = Duration::from_millis(cli.timeout_ms);
 
-    let ips = match expand_ips(&args.ip) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(2);
-        }
-    };
-
-    let ports: Vec<u16> = if args.all_ports {
+    // Build port set
+    let ports: Vec<u16> = if cli.all_ports {
         (1u16..=65535u16).collect()
+    } else if let Some(p) = &cli.ports {
+        parse_ports(p).unwrap_or_else(|e| {
+            eprintln!("Error parsing ports: {e}");
+            std::process::exit(1);
+        })
     } else {
-        args.ports.unwrap_or_else(default_webfig_ports)
+        vec![80, 8080, 443]
     };
 
-    println!(
-        "Targets: {} | Ports: {} | concurrency={} | timeout={}ms",
-        ips.len(),
-        ports.len(),
-        args.concurrency,
-        args.timeout_ms
-    );
+    // Build target IPs
+    let mut ips: Vec<Ipv4Addr> = Vec::new();
 
-    let timeout = Duration::from_millis(args.timeout_ms);
-    let client = Client::builder()
+    if let Some(file) = cli.asn_file.as_ref() {
+        match fs::read_to_string(file) {
+            Ok(s) => {
+                for line in s.lines().map(|x| x.trim()).filter(|x| !x.is_empty()) {
+                    if let Ok(net) = line.parse::<Ipv4Network>() {
+                        ips.extend(net.iter().collect::<Vec<_>>());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to read ASN file {}: {e}", file);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(t) = &cli.target {
+        if let Ok(net) = t.parse::<Ipv4Network>() {
+            ips.extend(net.iter().collect::<Vec<_>>());
+        } else if let Some((start, end)) = parse_range(t) {
+            let mut cur = start;
+            while cur <= end {
+                ips.push(cur);
+                if cur == Ipv4Addr::new(255,255,255,255) { break; }
+                let n = u32::from(cur).saturating_add(1);
+                cur = Ipv4Addr::from(n);
+            }
+        } else if let Ok(ip) = t.parse::<Ipv4Addr>() {
+            ips.push(ip);
+        } else {
+            eprintln!("Error: invalid IP address syntax");
+            std::process::exit(1);
+        }
+    }
+
+    // Dedup
+    let mut set = HashSet::new();
+    ips.retain(|ip| set.insert(*ip));
+
+    if ips.is_empty() {
+        eprintln!("No targets to scan.");
+        return;
+    }
+
+    // HTTP client
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::limited(5))
-        .build()?;
+        .build()
+        .expect("client build");
 
-    let sem = Semaphore::new(args.concurrency);
+    let detect_title = Regex::new(r"(?i)mikrotik|webfig").unwrap();
+
+    // Task queue
+    let sem = tokio::sync::Semaphore::new(cli.concurrency);
     let mut futs = FuturesUnordered::new();
 
     for ip in ips {
-        for &port in &ports {
-            let permit = sem.clone().acquire_owned().await?;
-            let c = client.clone();
+        for port in &ports {
+            let p = *port;
+            let ip_s = ip.to_string();
+            let client = client.clone();
+            let permit = sem.clone().acquire_owned().await.unwrap();
             futs.push(tokio::spawn(async move {
-                let _p = permit; // keep permit alive
-                let out = check_one(&c, &ip, port, timeout).await;
-                out
+                let _permit = permit;
+                let mut schemes = Vec::new();
+                // Prefer https on 443, else try http first.
+                if p == 443 {
+                    schemes = vec!["https", "http"];
+                } else {
+                    schemes = vec!["http", "https"];
+                }
+                for scheme in schemes {
+                    let url = format!("{scheme}://{ip_s}:{p}/");
+                    match client.get(&url).send().await {
+                        Ok(resp) => {
+                            let server = resp.headers()
+                                .get(reqwest::header::SERVER)
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("");
+                            let status = resp.status();
+                            let text = resp.text().await.unwrap_or_default();
+                            if server.to_ascii_lowercase().contains("mikrotik")
+                                || detect_title.is_match(&text)
+                            {
+                                println!("{ip_s}:{p}  [{status}]  server={server}  url={url}");
+                                return;
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
             }));
         }
     }
 
-    while let Some(res) = futs.next().await {
-        if let Ok(Some(line)) = res {
-            println!("{line}");
+    while let Some(_res) = futs.next().await {}
+}
+
+fn parse_ports(s: &str) -> Result<Vec<u16>, String> {
+    let mut out = Vec::new();
+    for part in s.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
+        if let Some((a,b)) = part.split_once('-') {
+            let start: u16 = a.parse().map_err(|_| format!("Bad port: {a}"))?;
+            let end: u16 = b.parse().map_err(|_| format!("Bad port: {b}"))?;
+            if start == 0 || end == 0 || start > end {
+                return Err(format!("Bad range: {part}"));
+            }
+            for p in start..=end { out.push(p); }
+        } else {
+            let p: u16 = part.parse().map_err(|_| format!("Bad port: {part}"))?;
+            if p == 0 { return Err(format!("Bad port: {p}")); }
+            out.push(p);
         }
     }
+    if out.is_empty() { return Err("Empty ports list".into()); }
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
 
-    Ok(())
+/// Parse "A.B.C.D-E.F.G.H" IPv4 range
+fn parse_range(s: &str) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    let (a, b) = s.split_once('-')?;
+    let start = Ipv4Addr::from_str(a).ok()?;
+    let end = Ipv4Addr::from_str(b).ok()?;
+    if u32::from(start) <= u32::from(end) { Some((start, end)) } else { None }
 }
