@@ -1,258 +1,284 @@
-
-use clap::{ArgAction, Parser};
-use futures::stream::{FuturesUnordered, StreamExt};
-use ipnetwork::{IpNetwork, Ipv4Network};
+use anyhow::{anyhow, Result};
+use clap::Parser;
+use ipnet::IpNet;
 use regex::Regex;
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
-fn banner() {
-    println!();
-    println!("============================================================");
-    println!("🚀  WebFigChecker – MikroTik Scanner");
-    println!("Founder: Ecbrain");
-    println!("Co-Founder: p4oT09");
-    println!("============================================================");
-    println!();
-}
-
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug)]
 #[command(
     name = "webfigchecker",
-    version,
-    about = "Fast WebFig (MikroTik) scanner over HTTP/HTTPS with IP, CIDR, Range, and ASN support"
+    about = "Scan IP/ASN/CIDR/range to detect MikroTik WebFig"
 )]
-struct Cli {
-    /// Target: single IP (1.2.3.4), CIDR (1.2.3.0/24), or range (1.2.3.4-1.2.3.200)
-    target: Option<String>,
+struct Args {
+    /// Single IP (ignored if --asn/--cidr/--ip-range used)
+    #[arg(required = false)]
+    ip: Option<String>,
 
-    /// Scan by ASN, e.g. AS13335 or 13335 (uses bgpview)
-    #[arg(long = "asn")]
+    /// Scan an Autonomous System, e.g. AS15169
+    #[arg(long)]
     asn: Option<String>,
 
-    /// Scan all ports 1..=65535
-    #[arg(long = "all-ports", action=ArgAction::SetTrue)]
-    all_ports: bool,
+    /// CIDR network to expand, e.g. 192.168.1.0/24
+    #[arg(long)]
+    cidr: Option<String>,
 
-    /// Comma-separated list of ports, ex: 80,443,8080-8090
-    #[arg(long = "ports")]
+    /// IPv4 range: start-end, e.g. 192.168.1.10-192.168.1.50 or 192.168.1.10-50
+    #[arg(long = "ip-range")]
+    ip_range: Option<String>,
+
+    /// Single port (if not using --all-ports/--ports)
+    #[arg(short, long)]
+    port: Option<u16>,
+
+    /// Comma separated ports (supports ranges), e.g. 80,443,8080-8090,8291
+    #[arg(long)]
     ports: Option<String>,
 
-    /// Concurrency (parallel sockets)
-    #[arg(short='c', long, default_value_t = 400)]
+    /// Scan ALL ports (1..=65535)
+    #[arg(long)]
+    all_ports: bool,
+
+    /// For ASN/CIDR: sample N IPs per prefix (default 1)
+    #[arg(long, default_value_t = 1)]
+    per_prefix: usize,
+
+    /// EXPENSIVE: expand every IP in every prefix for ASN/CIDR
+    #[arg(long)]
+    expand_all_ips: bool,
+
+    /// Max concurrent connections
+    #[arg(short = 'c', long, default_value_t = 400)]
     concurrency: usize,
 
-    /// Timeout per connect/request in ms
+    /// Per-connection timeout (ms)
     #[arg(long = "timeout-ms", default_value_t = 800)]
     timeout_ms: u64,
 }
 
-// ---- Port parsing ----
-fn parse_ports(s: &str) -> Result<Vec<u16>, String> {
-    let mut out = Vec::new();
-    for part in s.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
-        if let Some((a,b)) = part.split_once('-') {
-            let start: u16 = a.parse().map_err(|_| format!("Bad port: {a}"))?;
-            let end: u16 = b.parse().map_err(|_| format!("Bad port: {b}"))?;
-            if start == 0 || end == 0 || start > end { return Err(format!("Bad range: {part}")); }
-            out.extend(start..=end);
-        } else {
-            let p: u16 = part.parse().map_err(|_| format!("Bad port: {part}"))?;
-            if p == 0 { return Err(format!("Bad port: {p}")); }
-            out.push(p);
-        }
-    }
-    out.sort_unstable();
-    out.dedup();
-    Ok(out)
-}
 
-fn default_ports() -> Vec<u16> { vec![80,443,8080,81,82,83,8000,8888,8291] }
-
-// ---- Target expansion ----
-fn expand_cidr(net: Ipv4Network) -> Vec<Ipv4Addr> {
-    net.iter().collect()
-}
-
-fn expand_range(s: &str) -> Option<Vec<Ipv4Addr>> {
-    let (a,b) = s.split_once('-')?;
-    let start: Ipv4Addr = a.trim().parse().ok()?;
-    let end: Ipv4Addr = b.trim().parse().ok()?;
-    if u32::from(start) > u32::from(end) { return None; }
-    let mut v = Vec::with_capacity((u32::from(end) - u32::from(start) + 1) as usize);
-    let mut cur = u32::from(start);
-    let end_u = u32::from(end);
-    while cur <= end_u {
-        v.push(Ipv4Addr::from(cur));
-        cur = cur.saturating_add(1);
-    }
-    Some(v)
-}
-
-#[derive(Debug, Deserialize)]
-struct BgpViewPrefixes {
-    data: Option<BgpViewData>
-}
-#[derive(Debug, Deserialize)]
-struct BgpViewData {
-    #[serde(default)]
-    ipv4_prefixes: Vec<BgpViewPrefix>,
-}
-#[derive(Debug, Deserialize)]
-struct BgpViewPrefix { prefix: String }
-
-async fn expand_asn(asn_str: &str) -> anyhow::Result<Vec<Ipv4Addr>> {
-    let mut asn = asn_str.trim().to_uppercase();
-    if let Some(s) = asn.strip_prefix("AS") { asn = s.to_string(); }
-    let _ = asn.parse::<u64>()?; // validate numeric
-
-    let url = format!("https://api.bgpview.io/asn/{}/prefixes", asn);
-    let resp = reqwest::Client::new().get(&url).send().await?;
-    let parsed: BgpViewPrefixes = resp.json().await?;
-    let mut out = Vec::new();
-    if let Some(data) = parsed.data {
-        for p in data.ipv4_prefixes {
-            if let Ok(IpNetwork::V4(v4)) = p.prefix.parse::<IpNetwork>() {
-                // Add all hosts in each prefix (careful for very large CIDRs)
-                out.extend(v4.iter());
-            }
-        }
-    }
-    // de-dup
-    out.sort_unstable_by_key(|ip| u32::from(*ip));
-    out.dedup();
-    Ok(out)
-}
-
-async fn expand_targets(cli: &Cli) -> anyhow::Result<Vec<Ipv4Addr>> {
-    let mut ips: Vec<Ipv4Addr> = Vec::new();
-
-    if let Some(asn) = &cli.asn {
-        let mut v = expand_asn(asn).await?;
-        ips.append(&mut v);
-    }
-
-    if let Some(t) = &cli.target {
-        if let Ok(IpNetwork::V4(net)) = t.parse::<IpNetwork>() {
-            ips.extend(expand_cidr(net));
-        } else if let Some(v) = expand_range(t) {
-            ips.extend(v);
-        } else if let Ok(ip) = t.parse::<Ipv4Addr>() {
-            ips.push(ip);
-        } else {
-            anyhow::bail!("invalid target: {}", t);
-        }
-    }
-
-    if ips.is_empty() {
-        anyhow::bail!("no targets provided. Give --asn or <target>");
-    }
-
-    // de-dup
-    ips.sort_unstable_by_key(|ip| u32::from(*ip));
-    ips.dedup();
-    Ok(ips)
-}
-
-// ---- Probing ----
-fn is_https_port(p: u16) -> bool { matches!(p, 443|8443) }
-
-async fn probe_http(client: &reqwest::Client, url: &str, timeout_ms: u64) -> Option<(u16, String)> {
-    let resp = timeout(Duration::from_millis(timeout_ms), client.get(url).send()).await.ok()??;
-    let status = resp.status();
-    let headers = resp.headers().clone();
-    let body = resp.text().await.unwrap_or_default();
-
-    let mut tag = String::new();
-    let lower = body.to_ascii_lowercase();
-    if lower.contains("webfig") || lower.contains("mikrotik") || lower.contains("routeros") {
-        tag = "webfig".into();
-    } else if status.is_success() {
-        tag = "http".into();
-    }
-    let server = headers
-        .get(reqwest::header::SERVER)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let tag = if tag == "webfig" { format!("webfig (server={})", server) } else { tag };
-    Some((status.as_u16(), tag))
-}
-
-async fn probe_one(ip: Ipv4Addr, port: u16, client: &reqwest::Client, timeout_ms: u64) -> Option<String> {
-    // try HTTP then HTTPS (or reverse if HTTPS-ish port)
-    let schemes = if is_https_port(port) { ["https", "http"] } else { ["http", "https"] };
-    for sch in schemes {
-        let url = format!("{sch}://{}:{}/", ip, port);
-        if let Some((code, tag)) = probe_http(client, &url, timeout_ms).await {
-            if !tag.is_empty() {
-                return Some(format!("{}:{} -> {} [{}] {}", ip, port, tag, code, url));
-            } else {
-                return Some(format!("{}:{} -> open [{}] {}", ip, port, code, url));
-            }
-        }
-    }
-    // As a fallback, plain TCP connect check:
-    let addr = SocketAddr::new(IpAddr::V4(ip), port);
-    if timeout(Duration::from_millis(timeout_ms), TcpStream::connect(addr)).await.ok().flatten().is_some() {
-        return Some(format!("{}:{} -> open (tcp)", ip, port));
-    }
-    None
+fn print_banner() {
+    println!("=======================================");
+    println!("   🚀 Welcome to WebFig Checker Tool   ");
+    println!("   Founder: Ecbrain                    ");
+    println!("   Co-Founder: p4oT09                  ");
+    println!("=======================================\n");
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    banner();
-    let cli = Cli::parse();
+async fn main() -> Result<()> {
+    print_banner();
+    let args = Args::parse();
+    let timeout_dur = Duration::from_millis(args.timeout_ms);
+    let portset = build_portset(&args)?;
 
-    let ports: Vec<u16> = if cli.all_ports {
-        (1u16..=65535u16).collect()
-    } else if let Some(ps) = &cli.ports {
-        parse_ports(ps).unwrap_or_else(|e| {
-            eprintln!("Ports parse error: {e}"); std::process::exit(2);
-        })
+    // Build list of target IPs
+    let targets: Vec<IpAddr> = if let Some(asn) = args.asn.as_deref() {
+        let prefixes = fetch_asn_prefixes(asn).await?;
+        eprintln!("ASN {} -> {} prefixes", asn, prefixes.len());
+        expand_prefixes(&prefixes, args.per_prefix, args.expand_all_ips)?
+    } else if let Some(c) = args.cidr.as_deref() {
+        let net: IpNet = c.parse()?;
+        expand_prefixes(&[net], args.per_prefix, args.expand_all_ips)?
+    } else if let Some(r) = args.ip_range.as_deref() {
+        expand_ipv4_range(r)?
+    } else if let Some(ip) = args.ip.as_deref() {
+        vec![ip.parse()?]
     } else {
-        default_ports()
+        return Err(anyhow!(
+            "Give one of: <IP> | --asn AS12345 | --cidr NET | --ip-range A-B"
+        ));
     };
 
-    let ips = expand_targets(&cli).await.unwrap_or_else(|e| {
-        eprintln!("Target error: {e}");
-        std::process::exit(2);
-    });
+    eprintln!(
+        "Targets: {} | Ports: {} | concurrency={} | timeout={}ms",
+        targets.len(),
+        portset.len(),
+        args.concurrency,
+        args.timeout_ms
+    );
 
-    println!("Targets: {} | Ports: {} | concurrency={} | timeout={}ms",
-        ips.len(), ports.len(), cli.concurrency, cli.timeout_ms);
+    let sem =  Arc::new(Semaphore::new(args.concurrency));
+    let mut tasks = Vec::new();
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .gzip(true)
-        .timeout(Duration::from_millis(cli.timeout_ms * 2))
-        .build()?;
-
-    let sem = Arc::new(Semaphore::new(cli.concurrency));
-    let mut futs = FuturesUnordered::new();
-
-    for ip in ips {
-        for &p in &ports {
-            let client = client.clone();
+    for ip in targets {
+        for &port in &portset {
             let sem = sem.clone();
-            let timeout_ms = cli.timeout_ms;
-            futs.push(tokio::spawn(async move {
-                let _permit = sem.acquire_owned().await.ok();
-                probe_one(ip, p, &client, timeout_ms).await
+            let to = timeout_dur;
+            tasks.push(tokio::spawn(async move {
+                let _p = sem.acquire().await.unwrap();
+                if let Ok(Some(prod)) = check_webfig(ip, port, to).await {
+                    println!("{}:{} -> {}", ip, port, prod);
+                }
             }));
         }
     }
 
-    while let Some(res) = futs.next().await {
-        if let Ok(Some(line)) = res { println!("{line}"); }
-    }
-
+    for t in tasks { let _ = t.await; }
     Ok(())
+}
+
+/* ---------- targets helpers ---------- */
+
+#[derive(Deserialize)]
+struct BgpviewPrefixes { data: BgpviewData }
+#[derive(Deserialize)]
+struct BgpviewData {
+    ipv4_prefixes: Vec<PrefixEntry>,
+    #[allow(dead_code)]
+    ipv6_prefixes: Vec<PrefixEntry>,
+}
+#[derive(Deserialize)]
+struct PrefixEntry { prefix: String }
+
+async fn fetch_asn_prefixes(asn_input: &str) -> Result<Vec<IpNet>> {
+    // Must be like "AS12345"
+    let mut asn = asn_input.trim().to_uppercase();
+    if !asn.starts_with("AS") { asn = format!("AS{}", asn); }
+    let url = format!("https://api.bgpview.io/asn/{}/prefixes", asn);
+
+    let client = reqwest::Client::builder()
+        .user_agent("webfigchecker/1.3")
+        .build()?;
+
+    let resp: BgpviewPrefixes = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let mut out = Vec::new();
+    for e in resp.data.ipv4_prefixes {
+        if let Ok(net) = e.prefix.parse::<IpNet>() {
+            if net.addr().is_ipv4() { out.push(net); }
+        }
+    }
+    Ok(out)
+}
+
+fn expand_prefixes(prefixes: &[IpNet], per: usize, all: bool) -> Result<Vec<IpAddr>> {
+    let mut ips = Vec::new();
+    for p in prefixes {
+        if let IpNet::V4(v4) = p {
+            if all {
+                for ip in v4.hosts() { ips.push(IpAddr::V4(ip)); }
+            } else {
+                let mut n = 0usize;
+                for ip in v4.hosts() {
+                    ips.push(IpAddr::V4(ip));
+                    n += 1; if n >= per { break; }
+                }
+            }
+        }
+    }
+    Ok(ips)
+}
+
+fn expand_ipv4_range(spec: &str) -> Result<Vec<IpAddr>> {
+    let parts: Vec<&str> = spec.split('-').collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("ip-range must be like 192.168.1.10-192.168.1.50 or 192.168.1.10-50"));
+    }
+    let start: Ipv4Addr = parts[0].parse()?;
+    let end: Ipv4Addr = if parts[1].contains('.') {
+        parts[1].parse()?
+    } else {
+        let mut s = parts[0].split('.').collect::<Vec<_>>();
+        s[3] = parts[1];
+        Ipv4Addr::from_str(&s.join("."))?
+    };
+    if u32::from(start) > u32::from(end) { return Err(anyhow!("start > end")); }
+    let mut v = Vec::new();
+    let (mut a, b) = (u32::from(start), u32::from(end));
+    while a <= b { v.push(IpAddr::V4(Ipv4Addr::from(a))); a += 1; }
+    Ok(v)
+}
+
+/* ---------- ports helpers ---------- */
+
+fn build_portset(a: &Args) -> Result<Vec<u16>> {
+    if a.all_ports { return Ok((1u16..=65535u16).collect()); }
+    if let Some(s) = &a.ports {
+        let mut v: Vec<u16> = Vec::new();
+        for item in s.split(',') {
+            let item = item.trim();
+            if item.is_empty() { continue; }
+            if let Some((start_str, end_str)) = item.split_once('-') {
+                let start: u16 = start_str.trim().parse()?;
+                let end: u16 = end_str.trim().parse()?;
+                let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+                for p in lo..=hi { v.push(p); }
+            } else {
+                v.push(item.parse::<u16>()?);
+            }
+        }
+        v.sort_unstable();
+        v.dedup();
+        return Ok(v);
+    }
+    if let Some(p) = a.port { return Ok(vec![p]); }
+    Ok(vec![80, 443, 8080, 8291])
+}
+    if let Some(s) = &a.ports {
+        let mut v = Vec::new();
+        for p in s.split(',') { v.push(p.trim().parse::<u16>()?); }
+        v.sort_unstable(); v.dedup(); return Ok(v);
+    }
+    if let Some(p) = a.port { return Ok(vec![p]); }
+    Ok(vec![80, 443, 8080, 8291])
+}
+
+/* ---------- detector ---------- */
+
+async fn check_webfig(ip: IpAddr, port: u16, to: Duration) -> Result<Option<String>> {
+    let addr = SocketAddr::new(ip, port);
+    let mut stream = match timeout(to, TcpStream::connect(addr)).await {
+        Ok(Ok(s)) => s, _ => return Ok(None),
+    };
+
+    let req = format!(
+        "GET / HTTP/1.1\r\nHost: {}\r\nUser-Agent: webfigchecker/1.3\r\nConnection: close\r\n\r\n",
+        ip
+    );
+    let _ = stream.write_all(req.as_bytes()).await;
+
+    let mut buf = vec![0u8; 4096];
+    let n = match timeout(to, stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => n, _ => return Ok(None),
+    };
+    let body = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+
+    let has = body.contains("webfig") || body.contains("mikrotik") || body.contains("routeros");
+    if !has {
+        let re = Regex::new(r"routeros|mikrotik|webfig").unwrap();
+        if !re.is_match(&body) { return Ok(None); }
+    }
+    let product = extract_product(&body).unwrap_or_else(|| "WebFig".to_string());
+    Ok(Some(product))
+}
+
+fn extract_product(s: &str) -> Option<String> {
+    for p in [
+        r"(routeros\s*v?[\d\.]+)",
+        r"(mikrotik\s*routeros\s*v?[\d\.]+)",
+        r"(webfig)",
+        r"(mikrotik)",
+    ] {
+        if let Ok(re) = Regex::new(p) {
+            if let Some(m) = re.captures(s) {
+                return Some(m.get(1)?.as_str().trim().to_string());
+            }
+        }
+    }
+    None
 }
