@@ -210,6 +210,7 @@ fn build_portset(a: &Args) -> Result<Vec<u16>> {
     if a.all_ports {
         return Ok((1u16..=65535u16).collect());
     }
+
     if let Some(s) = &a.ports {
         let mut v: Vec<u16> = Vec::new();
         for item in s.split(',') {
@@ -232,20 +233,11 @@ fn build_portset(a: &Args) -> Result<Vec<u16>> {
         v.dedup();
         return Ok(v);
     }
+
     if let Some(p) = a.port {
         return Ok(vec![p]);
     }
-    Ok(vec![80, 443, 8080, 8291])
-}
-    if let Some(p) = a.port { return Ok(vec![p]); }
-    Ok(vec![80, 443, 8080, 8291])
-}
-    if let Some(s) = &a.ports {
-        let mut v = Vec::new();
-        for p in s.split(',') { v.push(p.trim().parse::<u16>()?); }
-        v.sort_unstable(); v.dedup(); return Ok(v);
-    }
-    if let Some(p) = a.port { return Ok(vec![p]); }
+
     Ok(vec![80, 443, 8080, 8291])
 }
 
