@@ -207,17 +207,23 @@ fn expand_ipv4_range(spec: &str) -> Result<Vec<IpAddr>> {
 /* ---------- ports helpers ---------- */
 
 fn build_portset(a: &Args) -> Result<Vec<u16>> {
-    if a.all_ports { return Ok((1u16..=65535u16).collect()); }
+    if a.all_ports {
+        return Ok((1u16..=65535u16).collect());
+    }
     if let Some(s) = &a.ports {
         let mut v: Vec<u16> = Vec::new();
         for item in s.split(',') {
             let item = item.trim();
-            if item.is_empty() { continue; }
+            if item.is_empty() {
+                continue;
+            }
             if let Some((start_str, end_str)) = item.split_once('-') {
                 let start: u16 = start_str.trim().parse()?;
                 let end: u16 = end_str.trim().parse()?;
                 let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
-                for p in lo..=hi { v.push(p); }
+                for p in lo..=hi {
+                    v.push(p);
+                }
             } else {
                 v.push(item.parse::<u16>()?);
             }
@@ -226,6 +232,11 @@ fn build_portset(a: &Args) -> Result<Vec<u16>> {
         v.dedup();
         return Ok(v);
     }
+    if let Some(p) = a.port {
+        return Ok(vec![p]);
+    }
+    Ok(vec![80, 443, 8080, 8291])
+}
     if let Some(p) = a.port { return Ok(vec![p]); }
     Ok(vec![80, 443, 8080, 8291])
 }
