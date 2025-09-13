@@ -101,32 +101,33 @@ MIT
 
 Created by **p4oT09**
 
-## Installation
-
-### Termux (Android)
-```bash
-pkg update && pkg upgrade
-pkg install rust git
-git clone https://github.com/p4oT09/webfigchecker.git
-cd webfigchecker
-cargo build --release
-```
+## 🖥 Installation
 
 ### Linux
 ```bash
-sudo apt update
-sudo apt install -y curl build-essential pkg-config libssl-dev git
-curl https://sh.rustup.rs -sSf | sh
-git clone https://github.com/p4oT09/webfigchecker.git
-cd webfigchecker
+sudo apt update && sudo apt install -y git curl build-essential
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source $HOME/.cargo/env
+
+git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
+cd WebFigChecker---MikroTik-WebFig-Scanner
+cargo build --release
+```
+
+### Android (Termux)
+```bash
+pkg update && pkg upgrade -y
+pkg install rust git clang curl -y
+git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
+cd WebFigChecker---MikroTik-WebFig-Scanner
 cargo build --release
 ```
 
 ### Windows (PowerShell)
 ```powershell
-winget install Rustlang.Rustup
-git clone https://github.com/p4oT09/webfigchecker.git
-cd webfigchecker
+irm https://win.rustup.rs -UseBasicParsing | iex
+git clone https://github.com/p4oT09/WebFigChecker---MikroTik-WebFig-Scanner.git
+cd WebFigChecker---MikroTik-WebFig-Scanner
 cargo build --release
 ```
 
